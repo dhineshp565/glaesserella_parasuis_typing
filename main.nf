@@ -143,6 +143,11 @@ process abricate{
 	HeaderOnly=1  # Expected line count if only the header is present
 
 
+	sed -i 's,_flye.fasta,,g' "${SampleName}_serotype.csv"
+	if [ "\$(wc -l < "${SampleName}_serotype.csv")" -eq \$HeaderOnly ]; then
+    	echo -e "\$DefaultLine" >> "${SampleName}_serotype.csv"
+	fi
+
 	abricate -datadir ${db} --db Gparasuis_vfdb ${consensus} 1> ${SampleName}_vf.csv
 	sed -i 's,_flye.fasta,,g' ${SampleName}_vf.csv
 	if [ "\$(wc -l < "${SampleName}_vf.csv")" -eq \$HeaderOnly ]; then
