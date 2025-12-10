@@ -72,12 +72,11 @@ process dragonflye {
     tuple val(SampleName),path(SamplePath)
 	val(medaka_model)
     output:
-    val(SampleName),emit:sample
-	tuple val(SampleName),path("${SampleName}_flye.fasta"),emit:assembly
+	tuple val(SampleName),path("${SampleName}_flye.fasta")
 	path("${SampleName}_flye-info.txt"),emit:flyeinfo
     script:
     """
-    dragonflye --reads ${SamplePath} --outdir ${SampleName}_assembly --model ${medaka_model} --gsize 2.4M --nanohq --medaka 1
+    dragonflye --reads ${SamplePath} --outdir ${SampleName}_assembly --gsize 2.4M --nanohq 
     # rename fasta file with samplename
     mv "${SampleName}_assembly"/flye.fasta "${SampleName}"_flye.fasta
     # rename fasta header with samplename
@@ -87,6 +86,33 @@ process dragonflye {
     sed -i 's/contig/${SampleName}_contig/g' "${SampleName}_flye-info.txt"
     """
 }
+
+
+process medaka {
+	publishDir "${params.out_dir}/medaka",mode:"copy"
+	label "high"
+	input:
+	tuple val(SampleName),path(SamplePath)
+	tuple val(SampleName),path(draft_assembly)
+	path("${SampleName}_flye-info.txt")
+	val (medaka_model)
+	output:
+	tuple val(SampleName),emit:sample
+	tuple val(SampleName),path("${SampleName}_assembly.fasta"),emit:assembly
+	path("${SampleName}_flye-info.txt"),emit:flyeinfo
+	
+	script:
+	"""
+	
+	medaka_consensus -i ${SamplePath} -d ${draft_assembly} -o ${SampleName}_medaka_assembly --bacteria
+		
+	mv ${SampleName}_medaka_assembly/consensus.fasta ${SampleName}_assembly.fasta
+	
+	"""
+
+}
+
+
 
 
 process busco {
@@ -115,7 +141,6 @@ process mlst {
 	script:
 	"""
 	mlst ${consensus} > ${SampleName}_MLST.csv
-	sed -i 's,_flye.fasta,,g' ${SampleName}_MLST.csv
 	"""
 }
 
@@ -133,31 +158,8 @@ process abricate{
 	
 	script:
 	"""
-	abricate --datadir ${db} --db Gparasuis_serodb_Howell -minid 80  -mincov 60 --quiet ${consensus} 1> ${SampleName}_serotype.csv
-	sed -i 's,_flye.fasta,,g' ${SampleName}_serotype.csv
-	abricate --datadir ${db} --db Gparasuis_serodb_Jia -minid 80  -mincov 60 --quiet ${consensus} 1> ${SampleName}_sero_Jia.csv
-	sed -i 's,_flye.fasta,,g' ${SampleName}_sero_Jia.csv
-
-	# Define default values
-	DefaultLine="${SampleName}\t${SampleName}_contig_1\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone"
-	HeaderOnly=1  # Expected line count if only the header is present
-
-
-	sed -i 's,_flye.fasta,,g' "${SampleName}_serotype.csv"
-	if [ "\$(wc -l < "${SampleName}_serotype.csv")" -eq \$HeaderOnly ]; then
-    	echo -e "\$DefaultLine" >> "${SampleName}_serotype.csv"
-	fi
-
-	abricate -datadir ${db} --db Gparasuis_vfdb ${consensus} 1> ${SampleName}_vf.csv
-	sed -i 's,_flye.fasta,,g' ${SampleName}_vf.csv
-	if [ "\$(wc -l < "${SampleName}_vf.csv")" -eq \$HeaderOnly ]; then
-    	echo -e "\$DefaultLine" >> "${SampleName}_vf.csv"
-	fi
-	abricate --db card ${consensus} 1> ${SampleName}_AMR.csv
-	sed -i 's,_flye.fasta,,g' ${SampleName}_AMR.csv
-	if [ "\$(wc -l < "${SampleName}_AMR.csv")" -eq \$HeaderOnly ]; then
-    	echo -e "\$DefaultLine" >> "${SampleName}_AMR.csv"
-	fi
+	run_abricate.sh ${SampleName} ${consensus} ${db}
+	
 	
 	"""
 
@@ -184,10 +186,11 @@ process make_limsfile {
 	"""
 	LIMS_file.sh
 	
-	date=\$(date '+%Y-%m-%d_%H-%M-%S')
-	awk 'FNR==1 && NR!=1 { while (/^#F/) getline; } 1 {print}' ${mlst_results} > MLST_file_\${date}.csv
+	datetime=\$(date +"%d%b%Y_%H-%M-%S")
+	awk 'FNR==1 && NR!=1 { while (/^#F/) getline; } 1 {print}' ${mlst_results} > MLST_file_\${datetime}.csv
 	# add header to mlst file
-	sed -i \$'1 i\\\nSAMPLE\tSCHEME\tST\tatpD\tinfB\tmdh\trpoB\t6pgd\tg3pd\tfrdB' MLST_file_\${date}.csv
+	sed -i \$'1 i\\\nSAMPLE\tSCHEME\tST\tatpD\tinfB\tmdh\trpoB\t6pgd\tg3pd\tfrdB' MLST_file_\${datetime}.csv
+	
 	
 
 	
@@ -239,18 +242,20 @@ workflow {
     if (params.trim_barcodes){
 		porechop(merge_fastq.out)
 		dragonflye(porechop.out,params.medaka_model) 
+		medaka(porechop.out,dragonflye.out,params.medaka_model)
 	} else {
-        dragonflye(merge_fastq.out,params.medaka_model)           
+        dragonflye(merge_fastq.out,params.medaka_model) 
+		medaka(merge_fastq.out,dragonflye.out,params.medaka_model)            
     }
 	versionfile=file("${baseDir}/software_version.csv")
 	//checking completeness of assembly
-    busco(dragonflye.out.assembly)
+    busco(medaka.out.assembly)
 	//mlst
-    mlst (dragonflye.out.assembly)
+    mlst (medaka.out.assembly)
 	//abricate AMR,serotyping and virulence factors
 	db_dir=("${baseDir}/Gparasuis_db")
-	abricate (dragonflye.out.assembly,db_dir)
-	versionfile=file("${baseDir}/software_version.csv")
+	abricate (medaka.out.assembly,db_dir)
+	versionfile=file("${baseDir}/software_version.tsv")
 	 //make lims file
     make_limsfile (abricate.out.sero_Howell.collect(),abricate.out.sero_jia.collect(),abricate.out.vif.collect(),abricate.out.AMR.collect(),mlst.out.collect(),versionfile)
 	//report generation

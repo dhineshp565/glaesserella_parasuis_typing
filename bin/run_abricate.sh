@@ -1,42 +1,33 @@
 #!/bin/bash
-
-# Usage: ./run_abricate.sh <SampleName> <ConsensusFASTA> <SeroDB> <VFDB>
+# $1 = SampleName
+# $2 = genome assembly consensus
+# $3 = directory containing databases
+# Usage: ./run_abricate.sh <SampleName> <ConsensusFASTA> <DBDir>
 
 set -euo pipefail
 
-# Input arguments
-SampleName="$1"
-Consensus="$2"         # e.g., path/to/sample_assembly.fasta
-SeroDB="$3"            # e.g., path/to/abricate_db/sero
-VFDB="$4"              # e.g., path/to/abricate_db/vf
-
 # Define default values
-DefaultLine="${SampleName}\t${SampleName}_contig_1\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone"
+DefaultLine="$1\t$1_contig_1\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone\tNone"
 HeaderOnly=1  # Expected line count if only the header is present
 
-# Output filenames
-SeroOut="${SampleName}_sero.csv"
-VFOut="${SampleName}_vf.csv"
-AMROut="${SampleName}_AMR.csv"
+abricate --datadir $3 --db Gparasuis_serodb_Howell -minid 80  -mincov 80 --quiet $2 1> $1_serotype.csv
 
-# Run serotype search
-abricate --datadir "$SeroDB" --db Ssuis_serotype --minid 80 --mincov 60 --quiet "$Consensus" > "$SeroOut"
-sed -i 's,_assembly.fasta,,g' "$SeroOut"
-if [ "$(wc -l < "$SeroOut")" -eq $HeaderOnly ]; then
-    echo -e "$DefaultLine" >> "$SeroOut"
+if [ "$(wc -l < "$1_serotype.csv")" -eq $HeaderOnly ]; then
+    echo -e "$DefaultLine" >> "$1_serotype.csv"
+fi
+abricate --datadir $3 --db Gparasuis_serodb_Jia -minid 80  -mincov 80 --quiet $2 1> $1_sero_Jia.csv
+if [ "$(wc -l < "$1_sero_Jia.csv")" -eq $HeaderOnly ]; then
+    echo -e "$DefaultLine" >> "$1_sero_Jia.csv"
 fi
 
-# Run virulence factor search
-abricate --db vfdb "$Consensus" > "$VFOut"
-sed -i 's,_assembly.fasta,,g' "$VFOut"
-if [ "$(wc -l < "$VFOut")" -eq $HeaderOnly ]; then
-    echo -e "$DefaultLine" >> "$VFOut"
+abricate -datadir $3 --db Gparasuis_vfdb $2 1> $1_vf.csv
+
+if [ "$(wc -l < "$1_vf.csv")" -eq $HeaderOnly ]; then
+    	echo -e "$DefaultLine" >> "$1_vf.csv"
 fi
 
-# Run AMR search using CARD
-abricate --db card "$Consensus" > "$AMROut"
-sed -i 's,_assembly.fasta,,g' "$AMROut"
-if [ "$(wc -l < "$AMROut")" -eq $HeaderOnly ]; then
-    echo -e "$DefaultLine" >> "$AMROut"
-fi
+abricate --db card $2 1> $1_AMR.csv
 
+if [ "$(wc -l < "$1_AMR.csv")" -eq $HeaderOnly ]; then
+    echo -e "$DefaultLine" >> "$1_AMR.csv"
+fi
